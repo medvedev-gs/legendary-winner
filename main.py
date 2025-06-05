@@ -2,9 +2,11 @@
 # Импортируем необходимые библиотеки
 import pygame
 import sys
+from dataclasses import dataclass
 from scipy.stats import norm
 import numpy as np
 from functools import lru_cache
+from typing import List, Dict, Union, Tuple
 
 
 # ===== КОНСТАНТЫ =====
@@ -18,7 +20,7 @@ BLACK = (0, 0, 0)
 BLUE = (0, 0, 255)
 GREEN = (0, 255, 0)
 RED = (255, 0, 0)
-PANEL_COLOR = (150, 150, 150)
+PANEL_COLOR = (110, 110, 110)
 DARK_GRAY = (50, 50, 50)
 LIGHT_GRAY = (200, 200, 200)
 
@@ -54,31 +56,42 @@ TRADING_HOURS = 15
 PRICE_INNOVATION_SCALE = 1 / np.sqrt(TRADING_DAYS * TRADING_HOURS)
 
 # Кнопки
-BUTTON_WIDTH, BUTTON_HEIGHT = 100, 50
+BUTTON_WIDTH, BUTTON_HEIGHT = 50, 50
 BUY_BUTTON_POS = (50, 500)
 SELL_BUTTON_POS = (200, 500)
 
 
+@dataclass(frozen=True, slots=True)
 class GameMode:
-    def __init__(self, name, description, settings):
-        self.name = name
-        self.description = description
-        self.settings = settings
+    name: str
+    description: str
+    settings: Dict[str, Union[int, float]]
 
 
 class GameModeSystem:
     def __init__(self):
-        self.modes = [
-            GameMode("Новичок", "Низкая волатильность", {"speed": 1, "volatility_mult": 0.7, "commission": 0, "initial_cash": 10000, "trend_strength": 0.5}),
-            GameMode("Турбо", "Высокая скорость", {"speed": 3, "volatility_mult": 1.5, "commission": 0.001, "initial_cash": 5000, "trend_strength": 1.2}),
-            GameMode("Крипто", "Экстремальная волатильность", {"speed": 2, "volatility_mult": 2.5, "commission": 0.002, "initial_cash": 2000, "trend_strength": 2.0})
+        self.modes: List[GameMode] = [
+            GameMode(
+                name="Новичок",
+                description="Низкая волатильность",
+                settings={"speed": 1, "volatility_mult": 0.7, "commission": 0, "initial_cash": 10000, "trend_strength": 0.5}
+            ),
+            GameMode(
+                name="Турбо - режим",
+                description="Высокая скорость",
+                settings={"speed": 3, "volatility_mult": 1.5, "commission": 0.001, "initial_cash": 5000, "trend_strength": 1.2}
+            ),
+            GameMode(
+                name="Крипто - Анархия",
+                description="Экстремальная волатильность",
+                settings={"speed": 2, "volatility_mult": 2.5, "commission": 0.002, "initial_cash": 2000, "trend_strength": 2.0})
         ]
-        self.current_mode = 0
-        
-    def get_current(self):
+        self.current_mode: int = 0
+
+    def get_current(self) -> GameMode:
         return self.modes[self.current_mode]
-    
-    def next_mode(self):
+
+    def next_mode(self) -> GameMode:
         self.current_mode = (self.current_mode + 1) % len(self.modes)
         return self.get_current()
 
@@ -92,7 +105,7 @@ class VolatilityModel:
         self.innovations = norm.rvs(scale=self.innovation_scale, size=INNOVATION_BUFFER_SIZE)
         self.idx = 0
 
-    def update(self):
+    def update(self) -> float:
         innovation = self.innovations[self.idx]
         self.idx = (self.idx + 1) % (INNOVATION_BUFFER_SIZE)
         self.current = np.clip(
@@ -102,21 +115,20 @@ class VolatilityModel:
         )
         return self.current
 
-    def reset(self):
+    def reset(self) -> None:
         self.current = self.base
 
 
 class PriceModel:
-    def __init__(self, game_mode_system) -> None:
+    def __init__(self, game_mode_system: GameModeSystem) -> None:
         self.mode_system = game_mode_system
         self.volatility_model = VolatilityModel()
-        self.history_buffer = np.zeros(HISTORY_LENGTH)
-        self.buffer_idx = 0
+        self.visible_history = np.zeros(GRAPH_WIDTH)
         initial_prices = self.generate_history(HISTORY_LENGTH)
-        self.history_buffer[:] = initial_prices
+        self.visible_history[:] = initial_prices[-GRAPH_WIDTH:]
         self.price = initial_prices[-1]
 
-    def generate_history(self, length):
+    def generate_history(self, length: int):
         if not HISTORY_LENGTH >= GRAPH_WIDTH:
             raise ValueError(
                 f'HISTORY_LENGTH ({HISTORY_LENGTH}) должен быть >= GRAPH_WIDTH ({GRAPH_WIDTH})'
@@ -130,7 +142,7 @@ class PriceModel:
         prices = np.maximum(prices, MIN_PRICE)
         return prices
 
-    def update(self):
+    def update(self) -> float:
         if not HISTORY_LENGTH >= GRAPH_WIDTH:
             raise ValueError(
                 f'HISTORY_LENGTH ({HISTORY_LENGTH}) должен быть >= GRAPH_WIDTH ({GRAPH_WIDTH})'
@@ -141,19 +153,11 @@ class PriceModel:
         log_return = norm.rvs(scale=volatility * PRICE_INNOVATION_SCALE) + trend
         self.price = max(MIN_PRICE, self.price * np.exp(log_return))
 
-        # Обновляем историю
-        self.history_buffer[self.buffer_idx] = self.price
-        self.buffer_idx = (self.buffer_idx + 1) % HISTORY_LENGTH
-
         # Получаем видимую историю (последние GRAPH_WIDTH значений)
-        if self.buffer_idx >= GRAPH_WIDTH:
-            self.visible_history = self.history_buffer[self.buffer_idx - GRAPH_WIDTH : self.buffer_idx]
-        else:
-            # Если буфер "перевернулся", соединяем конец и начало
-            self.visible_history = np.concatenate([
-                self.history_buffer[HISTORY_LENGTH - (GRAPH_WIDTH - self.buffer_idx):],
-                self.history_buffer[:self.buffer_idx]
-            ])
+        if GRAPH_WIDTH <= 1:
+            raise ValueError(f'GRAPH_WIDTH должен быть некоторой ширины')
+        self.visible_history[:-1] = self.visible_history[1:]
+        self.visible_history[-1] = self.price
         return self.price
 
 class StockVisualizer:
@@ -161,11 +165,11 @@ class StockVisualizer:
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
     @lru_cache(maxsize=50)
-    def render_text(self, text, color, size):
+    def render_text(self, text: str, color: Tuple[int, int, int], size: int):
         font = pygame.font.SysFont('Arial', size)
         return font.render(text, True, color)
 
-    def draw_mode_selection(self, mode_system):
+    def draw_mode_selection(self, mode_system: GameModeSystem):
         """Отрисовка экрана выбора режима"""
         self.screen.fill(PANEL_COLOR)
     
@@ -240,7 +244,7 @@ class StockVisualizer:
             label = self.render_text(f"{price:.2f}", BLACK, 11)
             self.screen.blit(label, (label_x, y - 10))
 
-    def draw_graph(self, history):
+    def draw_graph(self, history: np.ndarray):
         if len(history) == 0:
             return
 
@@ -260,7 +264,7 @@ class StockVisualizer:
         points = np.column_stack((x_coords, scaled)).astype(int)
         pygame.draw.lines(self.screen, BLUE, False, points, 2)
 
-    def draw_ui(self, cash, shares, price, volatility, mode_system):
+    def draw_ui(self, cash, shares, price, volatility, mode_system: GameModeSystem):
         # Кнопки
         buy_button = pygame.draw.rect(self.screen, GREEN, (*BUY_BUTTON_POS, BUTTON_WIDTH, BUTTON_HEIGHT))
         sell_button = pygame.draw.rect(self.screen, RED, (*SELL_BUTTON_POS, BUTTON_WIDTH, BUTTON_HEIGHT))
