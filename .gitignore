@@ -1,0 +1,75 @@
+### Системные файлы MacOS ###
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+._*
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+### Папки с метаданными ###
+*.swp
+*~
+~$*
+.thumbs.db
+ehthumbs.db
+Desktop.ini
+
+### Python ###
+# Виртуальные окружения
+.qvenv/
+.venv/
+venv/
+env/
+ENV/
+
+# Кэш и скомпилированные файлы
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Anaconda
+.env
+.conda/
+conda-env/
+.ipynb_checkpoints/
+
+### IDE ###
+.vscode/
+.idea/
+*.swp
+*.swo
+
+### Логи и базы данных ###
+*.log
+*.sqlite
+*.db
+*.dump
+
+### Тестовые данные ###
+data/
+data_daily/
+lookup_cache/
+tmp/
+temp/
