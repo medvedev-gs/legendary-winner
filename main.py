@@ -18,6 +18,9 @@ BLACK = (0, 0, 0)
 BLUE = (0, 0, 255)
 GREEN = (0, 255, 0)
 RED = (255, 0, 0)
+PANEL_COLOR = (150, 150, 150)
+DARK_GRAY = (50, 50, 50)
+LIGHT_GRAY = (200, 200, 200)
 
 # График
 GRID_COLOR = (220, 220, 220)  # Светло-серый для сетки
@@ -33,7 +36,7 @@ TEXT_START_Y = 450  # Позиция текста по Y
 TEXT_SPACING = 150
 
 # Акции
-HISTORY_LENGTH = 1_000
+HISTORY_LENGTH = 2000
 INITIAL_PRICE = 100.0
 INITIAL_CASH = 1000.0
 MIN_PRICE = 0.01
@@ -45,7 +48,7 @@ VOLATILITY_SPEED = 0.05
 INNOVATION_SCALE = 0.1
 MIN_VOLATILITY = 0.1
 MAX_VOLATILITY = 2.5
-INNOVATION_BUFFER_SIZE = 1000
+INNOVATION_BUFFER_SIZE = 2000
 TRADING_DAYS = 260
 TRADING_HOURS = 15
 PRICE_INNOVATION_SCALE = 1 / np.sqrt(TRADING_DAYS * TRADING_HOURS)
@@ -56,18 +59,86 @@ BUY_BUTTON_POS = (50, 500)
 SELL_BUTTON_POS = (200, 500)
 
 
+class GameMode:
+    def __init__(self, name, description, settings):
+        self.name = name
+        self.description = description
+        self.settings = settings  # Словарь с параметрами
+
+class GameModeSystem:
+    def __init__(self):
+        self.modes = [
+            GameMode(
+                "Новичок",
+                "Медленные сделки, низкая волатильность\nИдеально для обучения",
+                {
+                    "speed": 1,
+                    "volatility_mult": 0.7,
+                    "commission": 0,
+                    "trend_strength": 0.5,
+                    "initial_cash": 10000,
+                    "unlock_all": False
+                }
+            ),
+            GameMode(
+                "Турботрейдинг",
+                "Высокоскоростной режим с агрессивным рынком\nДля адреналиновых трейдеров",
+                {
+                    "speed": 3,
+                    "volatility_mult": 1.8,
+                    "commission": 0.0005,
+                    "trend_strength": 1.2,
+                    "initial_cash": 5000,
+                    "unlock_all": True
+                }
+            ),
+            GameMode(
+                "Реализм",
+                "Полная имитация реального рынка\nС комиссиями и непредсказуемостью",
+                {
+                    "speed": 1,
+                    "volatility_mult": 1.0,
+                    "commission": 0.001,
+                    "trend_strength": 0.8,
+                    "initial_cash": 10000,
+                    "unlock_all": False
+                }
+            ),
+            GameMode(
+                "Крипто-краш",
+                "Экстремальная волатильность как на крипторынке\nВысокий риск - высокий доход",
+                {
+                    "speed": 2,
+                    "volatility_mult": 3.0,
+                    "commission": 0.002,
+                    "trend_strength": 2.0,
+                    "initial_cash": 2000,
+                    "unlock_all": True
+                }
+            )
+        ]
+        self.current_mode = 0  # Индекс текущего режима
+        
+    def get_current(self):
+        return self.modes[self.current_mode]
+    
+    def next_mode(self):
+        self.current_mode = (self.current_mode + 1) % len(self.modes)
+        return self.get_current()
+
+
 class VolatilityModel:
     def __init__(self):
         self.base = BASE_VOLATILITY
         self.current = BASE_VOLATILITY
         self.speed = VOLATILITY_SPEED
         self.innovation_scale = INNOVATION_SCALE
-        self.innovations = norm.rvs(scale=self.innovation_scale, size=INNOVATION_BUFFER_SIZE * 2)
+        self.innovations = norm.rvs(scale=self.innovation_scale, size=INNOVATION_BUFFER_SIZE)
         self.idx = 0
 
     def update(self):
         innovation = self.innovations[self.idx]
-        self.idx = (self.idx + 1) % (INNOVATION_BUFFER_SIZE * 2)
+        self.idx = (self.idx + 1) % (INNOVATION_BUFFER_SIZE)
         self.current = np.clip(
             self.current + self.speed * (self.base - self.current) + innovation,
             MIN_VOLATILITY,
@@ -80,21 +151,21 @@ class VolatilityModel:
 
 
 class PriceModel:
-    def __init__(self) -> None:
+    def __init__(self, game_mode_system) -> None:
+        self.mode_system = game_mode_system
         self.volatility_model = VolatilityModel()
         self.history_buffer = np.zeros(HISTORY_LENGTH)
         self.buffer_idx = 0
-        # Инициализируем историю корректными данными
         initial_prices = self.generate_history(HISTORY_LENGTH)
-        self.history_buffer[:] = initial_prices  # Заполняем буфер
-        self.price = initial_prices[-1]  # Текущая цена = последнее значение
+        self.history_buffer[:] = initial_prices
+        self.price = initial_prices[-1]
 
     def generate_history(self, length):
         if not HISTORY_LENGTH >= GRAPH_WIDTH:
             raise ValueError(
                 f'HISTORY_LENGTH ({HISTORY_LENGTH}) должен быть >= GRAPH_WIDTH ({GRAPH_WIDTH})'
             )
-        volatilities = np.full(length-1, self.volatility_model.current)
+        volatilities = np.array([self.volatility_model.update() for _ in range(length-1)])
         log_returns = norm.rvs(
             scale=volatilities * PRICE_INNOVATION_SCALE,
             size=length-1
@@ -108,8 +179,10 @@ class PriceModel:
             raise ValueError(
                 f'HISTORY_LENGTH ({HISTORY_LENGTH}) должен быть >= GRAPH_WIDTH ({GRAPH_WIDTH})'
             )
-        volatility = self.volatility_model.update()
-        log_return = norm.rvs(scale=volatility * PRICE_INNOVATION_SCALE) + LONG_TERM_TREND
+        mode = self.mode_system.get_current()
+        volatility = self.volatility_model.update() * mode.settings["volatility_mult"]
+        trend = LONG_TERM_TREND * mode.settings["trend_strength"]
+        log_return = norm.rvs(scale=volatility * PRICE_INNOVATION_SCALE) + trend
         self.price = max(MIN_PRICE, self.price * np.exp(log_return))
 
         # Обновляем историю
@@ -125,7 +198,6 @@ class PriceModel:
                 self.history_buffer[HISTORY_LENGTH - (GRAPH_WIDTH - self.buffer_idx):],
                 self.history_buffer[:self.buffer_idx]
             ])
-        
         return self.price
 
 class StockVisualizer:
@@ -136,6 +208,57 @@ class StockVisualizer:
     def render_text(self, text, color, size):
         font = pygame.font.SysFont('Arial', size)
         return font.render(text, True, color)
+
+    def draw_mode_selection(self, mode_system):
+        """Отрисовка экрана выбора режима"""
+        self.screen.fill(PANEL_COLOR)
+    
+        title = self.render_text("ВЫБЕРИТЕ РЕЖИМ ИГРЫ", DARK_GRAY, 32)
+        self.screen.blit(title, (SCREEN_WIDTH//2 - title.get_width()//2, 50))
+    
+        mode = mode_system.get_current()
+    
+        # Отображение текущего режима
+        mode_rect = pygame.Rect(SCREEN_WIDTH//2 - 200, 150, 400, 300)
+        pygame.draw.rect(self.screen, WHITE, mode_rect, 0, 15)
+        pygame.draw.rect(self.screen, BLUE, mode_rect, 3, 15)
+    
+        # Название режима
+        name_text = self.render_text(mode.name, BLUE, 28)
+        self.screen.blit(name_text, (SCREEN_WIDTH//2 - name_text.get_width()//2, 170))
+    
+        # Описание
+        desc_lines = mode.description.split('\n')
+        for i, line in enumerate(desc_lines):
+            desc_text = self.render_text(line, DARK_GRAY, 18)
+            self.screen.blit(desc_text, (SCREEN_WIDTH//2 - desc_text.get_width()//2, 220 + i*30))
+    
+        # Параметры
+        params = [
+            f"Скорость: {mode.settings['speed']}x",
+            f"Волатильность: {mode.settings['volatility_mult']}x",
+            f"Комиссия: {mode.settings['commission']*100:.1f}%",
+            f"Начальный капитал: ${mode.settings['initial_cash']:,}"
+        ]
+    
+        for i, param in enumerate(params):
+            param_text = self.render_text(param, BLACK, 16)
+            self.screen.blit(param_text, (SCREEN_WIDTH//2 - param_text.get_width()//2, 300 + i*25))
+    
+        # Кнопки
+        next_btn = pygame.draw.rect(self.screen, LIGHT_GRAY, (SCREEN_WIDTH//2 + 50, 450, 120, 40), 0, 10)
+        next_text = self.render_text("Далее →", BLACK, 16)
+        self.screen.blit(next_text, (SCREEN_WIDTH//2 + 110 - next_text.get_width()//2, 460))
+    
+        prev_btn = pygame.draw.rect(self.screen, LIGHT_GRAY, (SCREEN_WIDTH//2 - 170, 450, 120, 40), 0, 10)
+        prev_text = self.render_text("← Назад", BLACK, 16)
+        self.screen.blit(prev_text, (SCREEN_WIDTH//2 - 110 - prev_text.get_width()//2, 460))
+    
+        start_btn = pygame.draw.rect(self.screen, GREEN, (SCREEN_WIDTH//2 - 100, 510, 200, 50), 0, 10)
+        start_text = self.render_text("НАЧАТЬ ТОРГОВЛЮ", WHITE, 18)
+        self.screen.blit(start_text, (SCREEN_WIDTH//2 - start_text.get_width()//2, 525))
+    
+        return prev_btn, next_btn, start_btn
 
     def draw_background(self):
         """Рисует фон и сетку"""
@@ -192,8 +315,7 @@ class StockVisualizer:
         texts = [
             self.render_text(f'Деньги: ${cash:.2f}', BLACK, 14),
             self.render_text(f'Акции: {shares}', BLACK, 14),
-            self.render_text(f'Цена: ${price:.2f}', BLACK, 14),
-            self.render_text(f'Волатильность: {volatility:.2f}', RED, 14)
+            self.render_text(f'Цена: ${price:.2f}', BLACK, 14)
         ]
         
         for i, text in enumerate(texts):
@@ -205,13 +327,15 @@ class StockVisualizer:
 def main():
     pygame.init()
     visualizer = StockVisualizer()
-    price_model = PriceModel()
+    mode_system = GameModeSystem()
     clock = pygame.time.Clock()
     
     # Игровые параметры
     cash = INITIAL_CASH
     shares = 0
-    
+
+    game_state = "mode_selection"
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -220,23 +344,44 @@ def main():
                 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_pos = pygame.mouse.get_pos()
-                buy_button, sell_button = visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
                 
-                if buy_button.collidepoint(mouse_pos) and cash >= price_model.price:
-                    shares += 1
-                    cash -= price_model.price
+                if game_state == "mode_selection":
+                    prev_btn, next_btn, start_btn = visualizer.draw_mode_selection(mode_system)
                     
-                elif sell_button.collidepoint(mouse_pos) and shares > 0:
-                    shares -= 1
-                    cash += price_model.price
-        
-        # Отрисовка:
-        price_model.update()
+                    if next_btn.collidepoint(mouse_pos):
+                        mode_system.next_mode()
+                    elif prev_btn.collidepoint(mouse_pos):
+                        mode_system.next_mode()
+                    elif start_btn.collidepoint(mouse_pos):
+                        game_state = "trading"
 
-        visualizer.draw_background()  # Сначала фон и сетка
-        visualizer.draw_graph(price_model.visible_history)
-        visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
-    
+                        current_mode = mode_system.get_current()
+                        price_model = PriceModel(mode_system)
+                        cash = current_mode.settings["initial_cash"]
+                        shares = 0
+
+                elif game_state == "trading":
+                    buy_button, sell_button = visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
+
+                    if buy_button.collidepoint(mouse_pos) and cash >= price_model.price:
+                        shares += 1
+                        cash -= price_model.price
+                    
+                    elif sell_button.collidepoint(mouse_pos) and shares > 0:
+                        shares -= 1
+                        cash += price_model.price
+
+        # Отрисовка:
+        if game_state == "mode_selection":
+            visualizer.draw_mode_selection(mode_system)
+
+        elif game_state == "trading":
+            price_model.update()
+
+            visualizer.draw_background()
+            visualizer.draw_graph(price_model.visible_history)
+            visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
+
         pygame.display.flip()
         clock.tick(FPS)
  
