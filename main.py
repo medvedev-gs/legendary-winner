@@ -63,61 +63,17 @@ class GameMode:
     def __init__(self, name, description, settings):
         self.name = name
         self.description = description
-        self.settings = settings  # Словарь с параметрами
+        self.settings = settings
+
 
 class GameModeSystem:
     def __init__(self):
         self.modes = [
-            GameMode(
-                "Новичок",
-                "Медленные сделки, низкая волатильность\nИдеально для обучения",
-                {
-                    "speed": 1,
-                    "volatility_mult": 0.7,
-                    "commission": 0,
-                    "trend_strength": 0.5,
-                    "initial_cash": 10000,
-                    "unlock_all": False
-                }
-            ),
-            GameMode(
-                "Турботрейдинг",
-                "Высокоскоростной режим с агрессивным рынком\nДля адреналиновых трейдеров",
-                {
-                    "speed": 3,
-                    "volatility_mult": 1.8,
-                    "commission": 0.0005,
-                    "trend_strength": 1.2,
-                    "initial_cash": 5000,
-                    "unlock_all": True
-                }
-            ),
-            GameMode(
-                "Реализм",
-                "Полная имитация реального рынка\nС комиссиями и непредсказуемостью",
-                {
-                    "speed": 1,
-                    "volatility_mult": 1.0,
-                    "commission": 0.001,
-                    "trend_strength": 0.8,
-                    "initial_cash": 10000,
-                    "unlock_all": False
-                }
-            ),
-            GameMode(
-                "Крипто-краш",
-                "Экстремальная волатильность как на крипторынке\nВысокий риск - высокий доход",
-                {
-                    "speed": 2,
-                    "volatility_mult": 3.0,
-                    "commission": 0.002,
-                    "trend_strength": 2.0,
-                    "initial_cash": 2000,
-                    "unlock_all": True
-                }
-            )
+            GameMode("Новичок", "Низкая волатильность", {"speed": 1, "volatility_mult": 0.7, "commission": 0, "initial_cash": 10000, "trend_strength": 0.5}),
+            GameMode("Турбо", "Высокая скорость", {"speed": 3, "volatility_mult": 1.5, "commission": 0.001, "initial_cash": 5000, "trend_strength": 1.2}),
+            GameMode("Крипто", "Экстремальная волатильность", {"speed": 2, "volatility_mult": 2.5, "commission": 0.002, "initial_cash": 2000, "trend_strength": 2.0})
         ]
-        self.current_mode = 0  # Индекс текущего режима
+        self.current_mode = 0
         
     def get_current(self):
         return self.modes[self.current_mode]
@@ -228,23 +184,21 @@ class StockVisualizer:
         self.screen.blit(name_text, (SCREEN_WIDTH//2 - name_text.get_width()//2, 170))
     
         # Описание
-        desc_lines = mode.description.split('\n')
-        for i, line in enumerate(desc_lines):
-            desc_text = self.render_text(line, DARK_GRAY, 18)
-            self.screen.blit(desc_text, (SCREEN_WIDTH//2 - desc_text.get_width()//2, 220 + i*30))
-    
-        # Параметры
+        desc_text = self.render_text(mode.description, DARK_GRAY, 18)
+        self.screen.blit(desc_text, (SCREEN_WIDTH//2 - desc_text.get_width()//2, 220))
+
+        # Параметры (проверяем наличие ключей в settings)
         params = [
-            f"Скорость: {mode.settings['speed']}x",
-            f"Волатильность: {mode.settings['volatility_mult']}x",
-            f"Комиссия: {mode.settings['commission']*100:.1f}%",
-            f"Начальный капитал: ${mode.settings['initial_cash']:,}"
+            f"Скорость: {mode.settings.get('speed', 1)}x",
+            f"Волатильность: {mode.settings.get('volatility_mult', 1)}x",
+            f"Комиссия: {mode.settings.get('commission', 0)*100:.1f}%",
+            f"Начальный капитал: ${mode.settings.get('initial_cash', 1000):,}"
         ]
-    
+
         for i, param in enumerate(params):
             param_text = self.render_text(param, BLACK, 16)
             self.screen.blit(param_text, (SCREEN_WIDTH//2 - param_text.get_width()//2, 300 + i*25))
-    
+
         # Кнопки
         next_btn = pygame.draw.rect(self.screen, LIGHT_GRAY, (SCREEN_WIDTH//2 + 50, 450, 120, 40), 0, 10)
         next_text = self.render_text("Далее →", BLACK, 16)
@@ -306,16 +260,18 @@ class StockVisualizer:
         points = np.column_stack((x_coords, scaled)).astype(int)
         pygame.draw.lines(self.screen, BLUE, False, points, 2)
 
-    def draw_ui(self, cash, shares, price, volatility):
+    def draw_ui(self, cash, shares, price, volatility, mode_system):
         # Кнопки
         buy_button = pygame.draw.rect(self.screen, GREEN, (*BUY_BUTTON_POS, BUTTON_WIDTH, BUTTON_HEIGHT))
         sell_button = pygame.draw.rect(self.screen, RED, (*SELL_BUTTON_POS, BUTTON_WIDTH, BUTTON_HEIGHT))
         
         # Текст
+        mode = mode_system.get_current()
         texts = [
             self.render_text(f'Деньги: ${cash:.2f}', BLACK, 14),
             self.render_text(f'Акции: {shares}', BLACK, 14),
-            self.render_text(f'Цена: ${price:.2f}', BLACK, 14)
+            self.render_text(f'Цена: ${price:.2f}', BLACK, 14),
+            self.render_text(f'Режим: {mode.name}', BLACK, 14)
         ]
         
         for i, text in enumerate(texts):
@@ -323,21 +279,20 @@ class StockVisualizer:
             
         return buy_button, sell_button
 
-
 def main():
     pygame.init()
     visualizer = StockVisualizer()
     mode_system = GameModeSystem()
     clock = pygame.time.Clock()
     
-    # Игровые параметры
-    cash = INITIAL_CASH
-    shares = 0
-
     game_state = "mode_selection"
-
     running = True
+    mode = None
+    
     while running:
+        if game_state == "trading":
+            mode = mode_system.get_current()
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -354,40 +309,41 @@ def main():
                         mode_system.next_mode()
                     elif start_btn.collidepoint(mouse_pos):
                         game_state = "trading"
-
-                        current_mode = mode_system.get_current()
                         price_model = PriceModel(mode_system)
-                        cash = current_mode.settings["initial_cash"]
+                        cash = mode_system.get_current().settings["initial_cash"]
                         shares = 0
-
+                
                 elif game_state == "trading":
-                    buy_button, sell_button = visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
-
+                    buy_button, sell_button = visualizer.draw_ui(
+                        cash, shares, price_model.price, 
+                        price_model.volatility_model.current, mode_system
+                    )
+                    
                     if buy_button.collidepoint(mouse_pos) and cash >= price_model.price:
                         shares += 1
-                        cash -= price_model.price
-                    
+                        cash -= price_model.price * (1 + mode.settings["commission"])
+                        
                     elif sell_button.collidepoint(mouse_pos) and shares > 0:
                         shares -= 1
-                        cash += price_model.price
+                        cash += price_model.price * (1 - mode.settings["commission"])
 
-        # Отрисовка:
+        # Отрисовка
         if game_state == "mode_selection":
             visualizer.draw_mode_selection(mode_system)
-
         elif game_state == "trading":
             price_model.update()
-
             visualizer.draw_background()
             visualizer.draw_graph(price_model.visible_history)
-            visualizer.draw_ui(cash, shares, price_model.price, price_model.volatility_model.current)
-
+            visualizer.draw_ui(
+                cash, shares, price_model.price, 
+                price_model.volatility_model.current, mode_system
+            )
+        
         pygame.display.flip()
-        clock.tick(FPS)
- 
+        clock.tick(FPS * (mode.settings["speed"] if game_state == "trading" and mode else 1))
+
     pygame.quit()
     sys.exit()
-
 
 if __name__ == "__main__":
     main()
